@@ -1,7 +1,20 @@
--- Extensiones
+-- 1. Limpiar cualquier intento anterior
+drop table if exists action_plans cascade;
+drop table if exists opportunities cascade;
+drop table if exists journeys cascade;
+drop table if exists products cascade;
+drop table if exists participants cascade;
+drop table if exists workshops cascade;
+drop table if exists profiles cascade;
+
+-- 2. Extensiones
 create extension if not exists "uuid-ossp";
 
--- 1. Profiles (extiende auth.users)
+-- ==========================================
+-- FASE 1: CREACIÓN DE TODAS LAS TABLAS
+-- ==========================================
+
+-- 3. Profiles (extiende auth.users)
 create table profiles (
   id uuid references auth.users on delete cascade primary key,
   email text unique not null,
@@ -9,12 +22,7 @@ create table profiles (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- Habilitar RLS en perfiles
-alter table profiles enable row level security;
-create policy "Usuarios pueden ver su propio perfil" on profiles for select using (auth.uid() = id);
-create policy "Usuarios pueden actualizar su propio perfil" on profiles for update using (auth.uid() = id);
-
--- 2. Workshops (Talleres)
+-- 4. Workshops (Talleres)
 create table workshops (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
@@ -23,13 +31,7 @@ create table workshops (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
-alter table workshops enable row level security;
-create policy "Facilitadores pueden ver y gestionar sus talleres" on workshops for all using (auth.uid() = facilitator_id);
-create policy "Participantes pueden ver el taller en el que están" on workshops for select using (
-  exists (select 1 from participants where workshop_id = workshops.id and user_id = auth.uid())
-);
-
--- 3. Participants (Participantes y perfil del negocio)
+-- 5. Participants (Participantes)
 create table participants (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references profiles(id) on delete cascade not null,
@@ -42,13 +44,7 @@ create table participants (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
-alter table participants enable row level security;
-create policy "Participantes pueden ver y editar sus datos" on participants for all using (auth.uid() = user_id);
-create policy "Facilitadores pueden ver a sus participantes" on participants for select using (
-  exists (select 1 from workshops where id = workshop_id and facilitator_id = auth.uid())
-);
-
--- 4. Products (Inventario y Evaluación)
+-- 6. Products (Inventario y Evaluación)
 create table products (
   id uuid default uuid_generate_v4() primary key,
   participant_id uuid references participants(id) on delete cascade not null,
@@ -62,6 +58,64 @@ create table products (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- 7. Journeys
+create table journeys (
+  id uuid default uuid_generate_v4() primary key,
+  participant_id uuid references participants(id) on delete cascade not null,
+  from_product_id uuid references products(id) on delete set null,
+  to_product_id uuid references products(id) on delete set null,
+  motivation text,
+  barrier text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 8. Opportunities
+create table opportunities (
+  id uuid default uuid_generate_v4() primary key,
+  participant_id uuid references participants(id) on delete cascade not null,
+  title text not null,
+  attractiveness integer default 0,
+  ease integer default 0,
+  hypothesis text,
+  experiment text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 9. Action Plans
+create table action_plans (
+  id uuid default uuid_generate_v4() primary key,
+  participant_id uuid references participants(id) on delete cascade not null,
+  action_title text not null,
+  timeframe text check (timeframe in ('7', '30', '60', '90')),
+  status text default 'pending',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+
+-- ==========================================
+-- FASE 2: REGLAS DE SEGURIDAD (RLS)
+-- ==========================================
+
+-- Profiles
+alter table profiles enable row level security;
+create policy "Usuarios pueden ver su propio perfil" on profiles for select using (auth.uid() = id);
+create policy "Usuarios pueden actualizar su propio perfil" on profiles for update using (auth.uid() = id);
+
+-- Workshops
+alter table workshops enable row level security;
+create policy "Facilitadores pueden ver y gestionar sus talleres" on workshops for all using (auth.uid() = facilitator_id);
+create policy "Participantes pueden ver el taller en el que están" on workshops for select using (
+  exists (select 1 from participants where workshop_id = workshops.id and user_id = auth.uid())
+);
+
+-- Participants
+alter table participants enable row level security;
+create policy "Participantes pueden ver y editar sus datos" on participants for all using (auth.uid() = user_id);
+create policy "Facilitadores pueden ver a sus participantes" on participants for select using (
+  exists (select 1 from workshops where id = workshop_id and facilitator_id = auth.uid())
+);
+
+-- Products
 alter table products enable row level security;
 create policy "Participantes gestionan sus productos" on products for all using (
   exists (select 1 from participants where id = participant_id and user_id = auth.uid())
@@ -74,17 +128,7 @@ create policy "Facilitadores ven productos de sus participantes" on products for
   )
 );
 
--- 5. Journeys
-create table journeys (
-  id uuid default uuid_generate_v4() primary key,
-  participant_id uuid references participants(id) on delete cascade not null,
-  from_product_id uuid references products(id) on delete set null,
-  to_product_id uuid references products(id) on delete set null,
-  motivation text,
-  barrier text,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
+-- Journeys
 alter table journeys enable row level security;
 create policy "Participantes gestionan sus journeys" on journeys for all using (
   exists (select 1 from participants where id = participant_id and user_id = auth.uid())
@@ -97,18 +141,7 @@ create policy "Facilitadores ven journeys de sus participantes" on journeys for 
   )
 );
 
--- 6. Opportunities
-create table opportunities (
-  id uuid default uuid_generate_v4() primary key,
-  participant_id uuid references participants(id) on delete cascade not null,
-  title text not null,
-  attractiveness integer default 0,
-  ease integer default 0,
-  hypothesis text,
-  experiment text,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
+-- Opportunities
 alter table opportunities enable row level security;
 create policy "Participantes gestionan sus oportunidades" on opportunities for all using (
   exists (select 1 from participants where id = participant_id and user_id = auth.uid())
@@ -121,16 +154,7 @@ create policy "Facilitadores ven oportunidades de sus participantes" on opportun
   )
 );
 
--- 7. Action Plans
-create table action_plans (
-  id uuid default uuid_generate_v4() primary key,
-  participant_id uuid references participants(id) on delete cascade not null,
-  action_title text not null,
-  timeframe text check (timeframe in ('7', '30', '60', '90')),
-  status text default 'pending',
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
+-- Action Plans
 alter table action_plans enable row level security;
 create policy "Participantes gestionan sus planes" on action_plans for all using (
   exists (select 1 from participants where id = participant_id and user_id = auth.uid())
