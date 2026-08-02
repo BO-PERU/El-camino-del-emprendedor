@@ -1,34 +1,99 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lightbulb, ArrowRight, ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function Opportunities() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { participant } = useWorkshop();
+
   const [ideas, setIdeas] = useState([
-    { id: 1, type: 'create_pan', description: 'Crear un E-book gratuito como PAN', impact: 4, effort: 2 },
-    { id: 2, type: 'create_torta', description: 'Programa de acompañamiento 6 meses (TORTA)', impact: 5, effort: 5 },
+    { tempId: Date.now(), type: 'create_pan', description: '', impact: 3, effort: 3 }
   ]);
+  const [deletedIds, setDeletedIds] = useState([]);
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    if (!participant || user.id === 'mock-123') return;
+
+    const fetchOpportunities = async () => {
+      const { data, error } = await supabase
+        .from('opportunities')
+        .select('*')
+        .eq('participant_id', participant.id)
+        .order('created_at', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        setIdeas(data.map(o => {
+          const match = o.title.match(/^\[(.*?)\] (.*)$/);
+          return {
+            tempId: o.id,
+            id: o.id,
+            type: match ? match[1] : 'create_pan',
+            description: match ? match[2] : o.title,
+            impact: o.attractiveness || 3,
+            effort: o.ease || 3
+          };
+        }));
+      }
+    };
+
+    fetchOpportunities();
+  }, [participant, user]);
+
   const addIdea = () => {
-    setIdeas([...ideas, { id: Date.now(), type: 'create_pan', description: '', impact: 3, effort: 3 }]);
+    setIdeas([...ideas, { tempId: Date.now(), type: 'create_pan', description: '', impact: 3, effort: 3 }]);
   };
 
-  const removeIdea = (id) => {
-    setIdeas(ideas.filter(i => i.id !== id));
+  const removeIdea = (tempId) => {
+    const ideaToRemove = ideas.find(i => i.tempId === tempId);
+    if (ideaToRemove && ideaToRemove.id) {
+      setDeletedIds(prev => [...prev, ideaToRemove.id]);
+    }
+    setIdeas(ideas.filter(i => i.tempId !== tempId));
   };
 
-  const handleChange = (id, field, value) => {
-    setIdeas(ideas.map(i => i.id === id ? { ...i, [field]: value } : i));
+  const handleChange = (tempId, field, value) => {
+    setIdeas(ideas.map(i => i.tempId === tempId ? { ...i, [field]: value } : i));
   };
 
-  const handleSaveAndContinue = () => {
+  const handleSaveAndContinue = async () => {
+    if (!participant) return;
     setSaving(true);
-    setTimeout(() => {
+    
+    try {
+      if (user.id !== 'mock-123') {
+        if (deletedIds.length > 0) {
+          await supabase.from('opportunities').delete().in('id', deletedIds);
+        }
+
+        const validIdeas = ideas.filter(i => i.description.trim() !== '').map(i => {
+          const oData = {
+            participant_id: participant.id,
+            title: `[${i.type}] ${i.description}`,
+            attractiveness: parseInt(i.impact),
+            ease: parseInt(i.effort)
+          };
+          if (i.id) oData.id = i.id;
+          return oData;
+        });
+
+        if (validIdeas.length > 0) {
+          const { error } = await supabase.from('opportunities').upsert(validIdeas);
+          if (error) throw error;
+        }
+      }
+      navigate('/pan-y-tortas/validation');
+    } catch (error) {
+      console.error('Error saving opportunities:', error);
+      alert('Hubo un error guardando las oportunidades.');
+    } finally {
       setSaving(false);
-      navigate('/validation');
-    }, 600);
+    }
   };
 
   // Matriz ICE (Impacto / Esfuerzo) simple
@@ -57,10 +122,10 @@ export default function Opportunities() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
         {ideas.map((idea) => (
-          <div key={idea.id} className="glass-panel" style={{ padding: '1.25rem', position: 'relative' }}>
+          <div key={idea.tempId} className="glass-panel" style={{ padding: '1.25rem', position: 'relative' }}>
             <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
               <button 
-                onClick={() => removeIdea(idea.id)}
+                onClick={() => removeIdea(idea.tempId)}
                 style={{ background: 'transparent', color: 'var(--status-lastre)', border: 'none', cursor: 'pointer' }}
               >
                 <Trash2 size={18} />
@@ -73,7 +138,7 @@ export default function Opportunities() {
                 <select 
                   className="input-field"
                   value={idea.type}
-                  onChange={(e) => handleChange(idea.id, 'type', e.target.value)}
+                  onChange={(e) => handleChange(idea.tempId, 'type', e.target.value)}
                 >
                   <option value="create_pan">🍞 Crear un nuevo PAN</option>
                   <option value="create_torta">🎂 Crear una nueva TORTA</option>
@@ -89,7 +154,7 @@ export default function Opportunities() {
                   className="input-field"
                   placeholder="¿Qué vas a hacer?"
                   value={idea.description}
-                  onChange={(e) => handleChange(idea.id, 'description', e.target.value)}
+                  onChange={(e) => handleChange(idea.tempId, 'description', e.target.value)}
                 />
               </div>
 
@@ -100,7 +165,7 @@ export default function Opportunities() {
                   min="1" max="5"
                   className="input-field"
                   value={idea.impact}
-                  onChange={(e) => handleChange(idea.id, 'impact', e.target.value)}
+                  onChange={(e) => handleChange(idea.tempId, 'impact', e.target.value)}
                 />
               </div>
 
@@ -111,7 +176,7 @@ export default function Opportunities() {
                   min="1" max="5"
                   className="input-field"
                   value={idea.effort}
-                  onChange={(e) => handleChange(idea.id, 'effort', e.target.value)}
+                  onChange={(e) => handleChange(idea.tempId, 'effort', e.target.value)}
                 />
               </div>
             </div>

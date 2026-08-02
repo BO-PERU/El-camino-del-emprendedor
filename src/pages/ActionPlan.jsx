@@ -1,28 +1,108 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function ActionPlan() {
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState([
-    { id: 1, week: 'Semana 1', task: 'Diseñar el temario del E-book', status: 'pending' },
-    { id: 2, week: 'Semana 2', task: 'Escribir el contenido y diseñar portada', status: 'pending' },
-    { id: 3, week: 'Semana 3', task: 'Configurar Landing Page', status: 'pending' },
-    { id: 4, week: 'Semana 4', task: 'Lanzamiento y promoción a la base de datos', status: 'pending' },
-  ]);
+  const { user } = useAuth();
+  const { participant } = useWorkshop();
+
+  const defaultTasks = [
+    { tempId: 1, week: 'Semana 1', week_number: 1, task: 'Diseñar el temario del E-book', status: 'pending' },
+    { tempId: 2, week: 'Semana 2', week_number: 2, task: 'Escribir el contenido y diseñar portada', status: 'pending' },
+    { tempId: 3, week: 'Semana 3', week_number: 3, task: 'Configurar Landing Page', status: 'pending' },
+    { tempId: 4, week: 'Semana 4', week_number: 4, task: 'Lanzamiento y promoción a la base de datos', status: 'pending' },
+  ];
+
+  const [tasks, setTasks] = useState(defaultTasks);
+  const [topOpportunity, setTopOpportunity] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const handleSaveAndContinue = () => {
+  useEffect(() => {
+    if (!participant || user.id === 'mock-123') return;
+
+    const fetchActionPlan = async () => {
+      // Find top opportunity
+      const { data: opps } = await supabase
+        .from('opportunities')
+        .select('id, attractiveness, ease')
+        .eq('participant_id', participant.id);
+
+      if (opps && opps.length > 0) {
+        const sorted = opps.sort((a, b) => {
+          const scoreA = (a.attractiveness || 1) / (a.ease || 1);
+          const scoreB = (b.attractiveness || 1) / (b.ease || 1);
+          return scoreB - scoreA;
+        });
+        const topOpp = sorted[0];
+        setTopOpportunity(topOpp);
+
+        const { data: plans } = await supabase
+          .from('action_plans')
+          .select('*')
+          .eq('participant_id', participant.id)
+          .eq('opportunity_id', topOpp.id)
+          .order('week_number', { ascending: true });
+
+        if (plans && plans.length > 0) {
+          const loadedTasks = [1, 2, 3, 4].map(w => {
+            const plan = plans.find(p => p.week_number === w);
+            return {
+              tempId: w,
+              id: plan?.id,
+              week: `Semana ${w}`,
+              week_number: w,
+              task: plan ? plan.task : '',
+              status: plan ? plan.status : 'pending'
+            };
+          });
+          setTasks(loadedTasks);
+        } else {
+          setTasks(defaultTasks.map(t => ({...t, task: ''})));
+        }
+      }
+    };
+
+    fetchActionPlan();
+  }, [participant, user]);
+
+  const handleSaveAndContinue = async () => {
+    if (!participant) return;
     setSaving(true);
-    setTimeout(() => {
+    try {
+      if (user.id !== 'mock-123' && topOpportunity) {
+        const validTasks = tasks.filter(t => t.task.trim() !== '').map(t => {
+          const data = {
+            participant_id: participant.id,
+            opportunity_id: topOpportunity.id,
+            week_number: t.week_number,
+            task: t.task,
+            status: t.status
+          };
+          if (t.id) data.id = t.id;
+          return data;
+        });
+
+        if (validTasks.length > 0) {
+          const { error } = await supabase.from('action_plans').upsert(validTasks);
+          if (error) throw error;
+        }
+      }
+      navigate('/pan-y-tortas/report');
+    } catch (error) {
+      console.error('Error saving action plan:', error);
+      alert('Hubo un error guardando el plan de acción.');
+    } finally {
       setSaving(false);
-      navigate('/report');
-    }, 600);
+    }
   };
 
-  const handleChange = (id, value) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, task: value } : t));
+  const handleChange = (tempId, value) => {
+    setTasks(tasks.map(t => t.tempId === tempId ? { ...t, task: value } : t));
   };
 
   return (
@@ -44,7 +124,7 @@ export default function ActionPlan() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {tasks.map((t) => (
-            <div key={t.id} style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div key={t.tempId} style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
               <div style={{ width: '100px', fontWeight: 'bold', color: 'var(--accent-primary)' }}>
                 {t.week}
               </div>
@@ -54,7 +134,7 @@ export default function ActionPlan() {
                 style={{ flex: 1 }}
                 placeholder="¿Qué vas a lograr esta semana?"
                 value={t.task}
-                onChange={(e) => handleChange(t.id, e.target.value)}
+                onChange={(e) => handleChange(t.tempId, e.target.value)}
               />
             </div>
           ))}

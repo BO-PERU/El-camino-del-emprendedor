@@ -3,11 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { Target, ArrowRight, ArrowLeft } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function BusinessProfile() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { participant, updateParticipant } = useWorkshop();
+  
   const [formData, setFormData] = useState({
     business_name: '',
     sector: '',
@@ -15,13 +18,14 @@ export default function BusinessProfile() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // In a real app, we'd fetch the existing participant record here
   useEffect(() => {
-    // mock fetch
-    if (user) {
-      // fetch participant info...
+    if (participant) {
+      setFormData({
+        business_name: participant.business_name || '',
+        sector: participant.sector || '',
+      });
     }
-  }, [user]);
+  }, [participant]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -30,14 +34,28 @@ export default function BusinessProfile() {
   };
 
   const handleSaveAndContinue = async () => {
+    if (!participant) return;
     setSaving(true);
-    // mock save to Supabase
-    // await supabase.from('participants').upsert({ user_id: user.id, ...formData })
-    setTimeout(() => {
-      setSaving(false);
+    
+    try {
+      if (user.id !== 'mock-123') {
+        const { error } = await supabase
+          .from('participants')
+          .update(formData)
+          .eq('id', participant.id);
+          
+        if (error) throw error;
+      }
+      
+      updateParticipant(formData);
       setSaved(true);
-      navigate('/client');
-    }, 600);
+      navigate('/pan-y-tortas/client');
+    } catch (error) {
+      console.error('Error saving business profile:', error);
+      alert('Hubo un error guardando tu información.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

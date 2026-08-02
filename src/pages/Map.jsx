@@ -1,17 +1,40 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Map as MapIcon, ArrowRight, ArrowLeft } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function StrategicMap() {
   const navigate = useNavigate();
-  // Mock computed products
-  const [products] = useState([
-    { id: 1, name: 'Taller Inicial', panTotal: 18, tortaTotal: 12 },
-    { id: 2, name: 'Consultoría Avanzada', panTotal: 10, tortaTotal: 20 },
-    { id: 3, name: 'Libro Digital', panTotal: 22, tortaTotal: 8 },
-    { id: 4, name: 'Mentoría 1:1', panTotal: 14, tortaTotal: 22 },
-  ]);
+  const { user } = useAuth();
+  const { participant } = useWorkshop();
+  
+  const [products, setProducts] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!participant || user.id === 'mock-123') return;
+
+    const fetchProducts = async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('participant_id', participant.id)
+        .order('created_at', { ascending: true });
+
+      if (!error && data) {
+        setProducts(data.map(p => {
+          const panTotal = Object.values(p.pan_scores || {}).reduce((a, b) => a + b, 0);
+          const tortaTotal = Object.values(p.torta_scores || {}).reduce((a, b) => a + b, 0);
+          return { ...p, panTotal, tortaTotal };
+        }));
+      }
+    };
+
+    fetchProducts();
+  }, [participant, user]);
 
   const getCategory = (pan, torta) => {
     if (pan >= 16 && torta >= 16) return 'estrella';
@@ -25,6 +48,30 @@ export default function StrategicMap() {
     pan: { title: '🥖 PAN (Conectar)', items: products.filter(p => getCategory(p.panTotal, p.tortaTotal) === 'pan'), color: 'var(--status-pan)' },
     torta: { title: '🎂 TORTA (Crear entrada)', items: products.filter(p => getCategory(p.panTotal, p.tortaTotal) === 'torta'), color: 'var(--status-torta)' },
     lastre: { title: '⚓ LASTRE (Retirar)', items: products.filter(p => getCategory(p.panTotal, p.tortaTotal) === 'lastre'), color: 'var(--status-lastre)' },
+  };
+
+  const handleContinue = async () => {
+    if (!participant) return;
+    setSaving(true);
+    
+    try {
+      if (user.id !== 'mock-123' && products.length > 0) {
+        const updates = products.map(p => ({
+          id: p.id,
+          participant_id: participant.id,
+          name: p.name, // required field
+          strategic_category: getCategory(p.panTotal, p.tortaTotal)
+        }));
+        
+        await supabase.from('products').upsert(updates);
+      }
+      
+      navigate('/pan-y-tortas/journey');
+    } catch (error) {
+      console.error('Error updating categories:', error);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -105,16 +152,17 @@ export default function StrategicMap() {
       </div>
 
       <div className="action-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <button className="btn-logout" onClick={() => navigate('/evaluation')} style={{ width: 'auto' }}>
+        <button className="btn-logout" onClick={() => navigate('/pan-y-tortas/evaluation')} style={{ width: 'auto' }}>
           <ArrowLeft size={18} /> Atrás
         </button>
         
         <button 
           className="btn-primary flex-center gap-2" 
-          onClick={() => navigate('/journey')}
+          onClick={handleContinue}
+          disabled={saving}
         >
-          Continuar a Journey Interno
-          <ArrowRight size={18} />
+          {saving ? 'Guardando...' : 'Continuar a Journey Interno'}
+          {!saving && <ArrowRight size={18} />}
         </button>
       </div>
     </div>

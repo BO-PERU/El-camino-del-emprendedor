@@ -1,36 +1,95 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, Plus, Trash2, ArrowRight, ArrowLeft } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function Inventory() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { participant } = useWorkshop();
+
   const [products, setProducts] = useState([
-    { id: 1, name: '', description: '', price: '', status: 'actual' }
+    { tempId: Date.now(), name: '', description: '', price: '', status: 'actual' }
   ]);
   const [saving, setSaving] = useState(false);
+  const [deletedIds, setDeletedIds] = useState([]);
+
+  useEffect(() => {
+    if (!participant || user.id === 'mock-123') return;
+
+    const fetchProducts = async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('participant_id', participant.id)
+        .order('created_at', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        setProducts(data.map(p => ({ ...p, tempId: p.id })));
+      }
+    };
+
+    fetchProducts();
+  }, [participant, user]);
 
   const addProduct = () => {
-    setProducts([...products, { id: Date.now(), name: '', description: '', price: '', status: 'actual' }]);
+    setProducts([...products, { tempId: Date.now(), name: '', description: '', price: '', status: 'actual' }]);
   };
 
-  const removeProduct = (id) => {
+  const removeProduct = (tempId) => {
     if (products.length > 1) {
-      setProducts(products.filter(p => p.id !== id));
+      const productToRemove = products.find(p => p.tempId === tempId);
+      if (productToRemove && productToRemove.id) {
+        setDeletedIds(prev => [...prev, productToRemove.id]);
+      }
+      setProducts(products.filter(p => p.tempId !== tempId));
     }
   };
 
-  const handleChange = (id, field, value) => {
-    setProducts(products.map(p => p.id === id ? { ...p, [field]: value } : p));
+  const handleChange = (tempId, field, value) => {
+    setProducts(products.map(p => p.tempId === tempId ? { ...p, [field]: value } : p));
   };
 
   const handleSaveAndContinue = async () => {
+    if (!participant) return;
     setSaving(true);
-    // mock save to Supabase products table
-    setTimeout(() => {
+    
+    try {
+      if (user.id !== 'mock-123') {
+        // Delete removed products
+        if (deletedIds.length > 0) {
+          await supabase.from('products').delete().in('id', deletedIds);
+        }
+
+        // Upsert current valid products
+        const validProducts = products.filter(p => p.name.trim() !== '').map(p => {
+          const prodData = {
+            participant_id: participant.id,
+            name: p.name,
+            description: p.description || null,
+            price: p.price ? parseFloat(p.price) : null,
+            status: p.status
+          };
+          if (p.id) prodData.id = p.id;
+          return prodData;
+        });
+
+        if (validProducts.length > 0) {
+          const { error } = await supabase.from('products').upsert(validProducts);
+          if (error) throw error;
+        }
+      }
+      
+      navigate('/pan-y-tortas/evaluation');
+    } catch (error) {
+      console.error('Error saving inventory:', error);
+      alert('Hubo un error guardando tu inventario.');
+    } finally {
       setSaving(false);
-      navigate('/evaluation');
-    }, 600);
+    }
   };
 
   const hasValidProduct = products.some(p => p.name.trim() !== '');
@@ -54,10 +113,10 @@ export default function Inventory() {
 
         <div className="inventory-list" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {products.map((product, index) => (
-            <div key={product.id} className="glass-panel" style={{ background: 'var(--bg-surface)', padding: '1.25rem', position: 'relative' }}>
+            <div key={product.tempId} className="glass-panel" style={{ background: 'var(--bg-surface)', padding: '1.25rem', position: 'relative' }}>
               <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
                 <button 
-                  onClick={() => removeProduct(product.id)}
+                  onClick={() => removeProduct(product.tempId)}
                   style={{ background: 'transparent', color: 'var(--status-lastre)', border: 'none', cursor: 'pointer' }}
                   title="Eliminar producto"
                 >
@@ -74,7 +133,7 @@ export default function Inventory() {
                     className="input-field"
                     placeholder="Ej. Taller Intensivo"
                     value={product.name}
-                    onChange={(e) => handleChange(product.id, 'name', e.target.value)}
+                    onChange={(e) => handleChange(product.tempId, 'name', e.target.value)}
                   />
                 </div>
                 
@@ -85,7 +144,7 @@ export default function Inventory() {
                     className="input-field"
                     placeholder="Ej. 1500"
                     value={product.price}
-                    onChange={(e) => handleChange(product.id, 'price', e.target.value)}
+                    onChange={(e) => handleChange(product.tempId, 'price', e.target.value)}
                   />
                 </div>
 
@@ -96,7 +155,7 @@ export default function Inventory() {
                     className="input-field"
                     placeholder="¿En qué consiste?"
                     value={product.description}
-                    onChange={(e) => handleChange(product.id, 'description', e.target.value)}
+                    onChange={(e) => handleChange(product.tempId, 'description', e.target.value)}
                   />
                 </div>
               </div>

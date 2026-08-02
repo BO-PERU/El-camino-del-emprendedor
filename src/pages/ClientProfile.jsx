@@ -1,10 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Target, ArrowRight, ArrowLeft } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function ClientProfile() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { participant, updateParticipant } = useWorkshop();
+
   const [formData, setFormData] = useState({
     target_client: '',
     client_problems: '',
@@ -12,18 +18,43 @@ export default function ClientProfile() {
   });
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    if (participant) {
+      setFormData({
+        target_client: participant.target_client || '',
+        client_problems: participant.client_problems || '',
+        client_aspirations: participant.client_aspirations || '',
+      });
+    }
+  }, [participant]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleSaveAndContinue = async () => {
+    if (!participant) return;
     setSaving(true);
-    // mock save
-    setTimeout(() => {
+    
+    try {
+      if (user.id !== 'mock-123') {
+        const { error } = await supabase
+          .from('participants')
+          .update(formData)
+          .eq('id', participant.id);
+          
+        if (error) throw error;
+      }
+      
+      updateParticipant(formData);
+      navigate('/pan-y-tortas/inventory');
+    } catch (error) {
+      console.error('Error saving client profile:', error);
+      alert('Hubo un error guardando tu información.');
+    } finally {
       setSaving(false);
-      navigate('/inventory');
-    }, 600);
+    }
   };
 
   return (

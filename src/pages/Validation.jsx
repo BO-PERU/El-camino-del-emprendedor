@@ -1,19 +1,63 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle, ArrowRight, ArrowLeft } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 export default function Validation() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { participant } = useWorkshop();
+
   const [method, setMethod] = useState('');
+  const [topOpportunity, setTopOpportunity] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const handleSaveAndContinue = () => {
+  useEffect(() => {
+    if (!participant || user.id === 'mock-123') return;
+
+    const fetchTopOpportunity = async () => {
+      const { data } = await supabase
+        .from('opportunities')
+        .select('*')
+        .eq('participant_id', participant.id);
+
+      if (data && data.length > 0) {
+        // Find top opportunity based on attractiveness / ease
+        const sorted = data.sort((a, b) => {
+          const scoreA = (a.attractiveness || 1) / (a.ease || 1);
+          const scoreB = (b.attractiveness || 1) / (b.ease || 1);
+          return scoreB - scoreA;
+        });
+        setTopOpportunity(sorted[0]);
+        if (sorted[0].experiment) {
+          setMethod(sorted[0].experiment);
+        }
+      }
+    };
+
+    fetchTopOpportunity();
+  }, [participant, user]);
+
+  const handleSaveAndContinue = async () => {
+    if (!participant) return;
     setSaving(true);
-    setTimeout(() => {
+    try {
+      if (user.id !== 'mock-123' && topOpportunity) {
+        await supabase
+          .from('opportunities')
+          .update({ experiment: method })
+          .eq('id', topOpportunity.id);
+      }
+      navigate('/pan-y-tortas/plan');
+    } catch (error) {
+      console.error('Error saving validation:', error);
+      alert('Hubo un error guardando el método de validación.');
+    } finally {
       setSaving(false);
-      navigate('/plan');
-    }, 600);
+    }
   };
 
   return (

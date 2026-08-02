@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layers, ArrowRight, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
+import { useWorkshop } from '../context/WorkshopContext';
 import './Stages.css';
 
 const PAN_CRITERIA = [
@@ -21,13 +24,35 @@ const TORTA_CRITERIA = [
 
 export default function Evaluation() {
   const navigate = useNavigate();
-  // Mock products from previous step
-  const [products, setProducts] = useState([
-    { id: 1, name: 'Taller Inicial', pan_scores: {}, torta_scores: {} },
-    { id: 2, name: 'Consultoría Avanzada', pan_scores: {}, torta_scores: {} }
-  ]);
-  const [expandedProduct, setExpandedProduct] = useState(products[0]?.id);
+  const { user } = useAuth();
+  const { participant } = useWorkshop();
+
+  const [products, setProducts] = useState([]);
+  const [expandedProduct, setExpandedProduct] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!participant || user.id === 'mock-123') return;
+
+    const fetchProducts = async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('participant_id', participant.id)
+        .order('created_at', { ascending: true });
+
+      if (!error && data) {
+        setProducts(data.map(p => ({
+          ...p,
+          pan_scores: p.pan_scores || {},
+          torta_scores: p.torta_scores || {}
+        })));
+        if (data.length > 0) setExpandedProduct(data[0].id);
+      }
+    };
+
+    fetchProducts();
+  }, [participant, user]);
 
   const handleScoreChange = (productId, type, criterionId, value) => {
     setProducts(products.map(p => {
@@ -45,15 +70,32 @@ export default function Evaluation() {
   };
 
   const calculateTotal = (scoresObj) => {
+    if (!scoresObj) return 0;
     return Object.values(scoresObj).reduce((a, b) => a + b, 0);
   };
 
-  const handleSaveAndContinue = () => {
+  const handleSaveAndContinue = async () => {
     setSaving(true);
-    setTimeout(() => {
+    try {
+      if (user.id !== 'mock-123') {
+        const updates = products.map(p => ({
+          id: p.id,
+          participant_id: participant.id,
+          name: p.name,
+          pan_scores: p.pan_scores,
+          torta_scores: p.torta_scores
+        }));
+        
+        const { error } = await supabase.from('products').upsert(updates);
+        if (error) throw error;
+      }
+      navigate('/pan-y-tortas/map');
+    } catch (error) {
+      console.error('Error saving evaluations:', error);
+      alert('Hubo un error guardando las evaluaciones.');
+    } finally {
       setSaving(false);
-      navigate('/map');
-    }, 600);
+    }
   };
 
   const renderScorer = (product, criteria, type) => (
